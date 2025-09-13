@@ -2,6 +2,7 @@ import { AppServer, AppSession, ViewType, AuthenticatedRequest, PhotoData } from
 import { Request, Response } from 'express';
 import * as ejs from 'ejs';
 import * as path from 'path';
+import { supabase } from './supabase';
 
 /**
  * Interface representing a stored photo with metadata
@@ -16,8 +17,16 @@ interface StoredPhoto {
   size: number;
 }
 
-const PACKAGE_NAME = process.env.PACKAGE_NAME ?? (() => { throw new Error('PACKAGE_NAME is not set in .env file'); })();
-const MENTRAOS_API_KEY = process.env.MENTRAOS_API_KEY ?? (() => { throw new Error('MENTRAOS_API_KEY is not set in .env file'); })();
+const PACKAGE_NAME =
+  process.env.PACKAGE_NAME ??
+  (() => {
+    throw new Error('PACKAGE_NAME is not set in .env file');
+  })();
+const MENTRAOS_API_KEY =
+  process.env.MENTRAOS_API_KEY ??
+  (() => {
+    throw new Error('MENTRAOS_API_KEY is not set in .env file');
+  })();
 const PORT = parseInt(process.env.PORT || '3000');
 
 /**
@@ -38,7 +47,6 @@ class ExampleMentraOSApp extends AppServer {
     });
     this.setupWebviewRoutes();
   }
-
 
   /**
    * Handle new session creation and button press events
@@ -61,7 +69,7 @@ class ExampleMentraOSApp extends AppServer {
         this.logger.info(`Streaming photos for user ${userId} is now ${this.isStreamingPhotos.get(userId)}`);
         return;
       } else {
-        session.layouts.showTextWall("Button pressed, about to take photo", {durationMs: 4000});
+        session.layouts.showTextWall('Button pressed, about to take photo', { durationMs: 4000 });
         // the user pressed the button, so we take a single photo
         try {
           // first, get the photo
@@ -105,86 +113,130 @@ class ExampleMentraOSApp extends AppServer {
   }
 
   /**
-   * Cache a photo for display
+   * Cache a photo for display and put into Supabase table
    */
   private async cachePhoto(photo: PhotoData, userId: string) {
-    // create a new stored photo object which includes the photo data and the user id
     const cachedPhoto: StoredPhoto = {
       requestId: photo.requestId,
       buffer: photo.buffer,
       timestamp: photo.timestamp,
-      userId: userId,
+      userId,
       mimeType: photo.mimeType,
       filename: photo.filename,
-      size: photo.size
+      size: photo.size,
     };
 
-    // this example app simply stores the photo in memory for display in the webview, but you could also send the photo to an AI api,
-    // or store it in a database or cloud storage, send it to roboflow, or do other processing here
-
-    // cache the photo for display
     this.photos.set(userId, cachedPhoto);
-    // update the latest photo timestamp
     this.latestPhotoTimestamp.set(userId, cachedPhoto.timestamp.getTime());
-    this.logger.info(`Photo cached for user ${userId}, timestamp: ${cachedPhoto.timestamp}`);
+
+    const bucket = process.env.SUPABASE_BUCKET!;
+    const ext = photo.mimeType === 'image/jpeg' ? 'jpg' : 'png';
+    const objectPath = `${userId}/${photo.requestId}.${ext}`;
+
+    // upload to supabase storage
+    const { error: uploadErr } = await supabase.storage.from(bucket).upload(objectPath, cachedPhoto.buffer, {
+      contentType: cachedPhoto.mimeType,
+      upsert: true,
+    });
+
+    if (uploadErr) {
+      this.logger.error(`Storage upload failed: ${uploadErr.message}`);
+      return;
+    }
+
+    // insert metadata into table
+    const { error: insertErr } = await supabase.from('photos').insert({
+      user_id: userId,
+      request_id: photo.requestId,
+      path: objectPath,
+      mime_type: photo.mimeType,
+      size: photo.size,
+      captured_at: photo.timestamp.toISOString(),
+    });
+
+    if (insertErr) {
+      this.logger.error(`Insert failed: ${insertErr.message}`);
+    } else {
+      this.logger.info(`Saved photo to Supabase: ${objectPath}`);
+    }
   }
 
-
   /**
- * Set up webview routes for photo display functionality
- */
+   * Set up webview routes for photo display functionality
+   * take latest photo from supabase table and return a signed url
+   */
   private setupWebviewRoutes(): void {
     const app = this.getExpressApp();
 
-    // API endpoint to get the latest photo for the authenticated user
-    app.get('/api/latest-photo', (req: any, res: any) => {
+    // get latest photo from supabase table
+    app.get('/api/latest-photo', async (req: any, res: any) => {
       const userId = (req as AuthenticatedRequest).authUserId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
 
-      if (!userId) {
-        res.status(401).json({ error: 'Not authenticated' });
-        return;
-      }
+      // latest row from supabase table
+      const { data: row, error } = await supabase
+        .from('photos')
+        .select('request_id, path, mime_type, size, captured_at')
+        .eq('user_id', userId)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      const photo = this.photos.get(userId);
-      if (!photo) {
-        res.status(404).json({ error: 'No photo available' });
-        return;
+      if (error) return res.status(500).json({ error: error.message });
+      if (!row) return res.status(404).json({ error: 'No photo available' });
+
+      // create signed URL from storage
+      const bucket = process.env.SUPABASE_BUCKET!;
+      const { data: signed, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(row.path, 60 * 5); // 5 minutes
+
+      if (signErr || !signed?.signedUrl) {
+        return res.status(500).json({ error: signErr?.message ?? 'Failed to sign URL' });
       }
 
       res.json({
-        requestId: photo.requestId,
-        timestamp: photo.timestamp.getTime(),
-        hasPhoto: true
+        requestId: row.request_id,
+        timestamp: new Date(row.captured_at).getTime(),
+        hasPhoto: true,
+        signedUrl: signed.signedUrl, // client load this directly
+        mimeType: row.mime_type,
+        size: row.size,
       });
     });
 
-    // API endpoint to get photo data
-    app.get('/api/photo/:requestId', (req: any, res: any) => {
+    // stream specific photo by requestId via server proxy
+    app.get('/api/photo/:requestId', async (req: any, res: any) => {
       const userId = (req as AuthenticatedRequest).authUserId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
       const requestId = req.params.requestId;
 
-      if (!userId) {
-        res.status(401).json({ error: 'Not authenticated' });
-        return;
-      }
+      // look up path and metadata in supabase table
+      const { data: row, error } = await supabase
+        .from('photos')
+        .select('path, mime_type')
+        .eq('user_id', userId)
+        .eq('request_id', requestId)
+        .maybeSingle();
 
-      const photo = this.photos.get(userId);
-      if (!photo || photo.requestId !== requestId) {
-        res.status(404).json({ error: 'Photo not found' });
-        return;
-      }
+      if (error) return res.status(500).json({ error: error.message });
+      if (!row) return res.status(404).json({ error: 'Photo not found' });
 
+      // download from storage and pipe back
+      const bucket = process.env.SUPABASE_BUCKET!;
+      const { data: file, error: dlErr } = await supabase.storage.from(bucket).download(row.path);
+      if (dlErr || !file) return res.status(500).json({ error: dlErr?.message ?? 'Failed to download photo' });
+
+      const arrayBuf = await file.arrayBuffer();
       res.set({
-        'Content-Type': photo.mimeType,
-        'Cache-Control': 'no-cache'
+        'Content-Type': row.mime_type,
+        'Cache-Control': 'no-cache',
       });
-      res.send(photo.buffer);
+      res.send(Buffer.from(arrayBuf));
     });
 
-    // Main webview route - displays the photo viewer interface
+    // webview route
     app.get('/webview', async (req: any, res: any) => {
       const userId = (req as AuthenticatedRequest).authUserId;
-
       if (!userId) {
         res.status(401).send(`
           <html>
@@ -203,8 +255,6 @@ class ExampleMentraOSApp extends AppServer {
     });
   }
 }
-
-
 
 // Start the server
 // DEV CONSOLE URL: https://console.mentra.glass/
