@@ -87,6 +87,23 @@ class ExampleMentraOSApp extends AppServer {
             session.logger.error(`TTS error: ${error}`);
           }
         } else if (transcribedText.includes(constants.RECORDING_PROMPT)) {
+          // check if already recording
+          if (this.isStreamingPhotos.get(userId)) {
+            session.logger.info(`User ${userId} is already recording`);
+            try {
+              await session.audio.speak('Recording already in progress', {
+                model_id: 'eleven_flash_v2_5',
+                voice_settings: {
+                  speed: 1.0,
+                  stability: 0.7,
+                },
+              });
+            } catch (error) {
+              session.logger.error(`TTS error: ${error}`);
+            }
+            return;
+          }
+
           session.logger.info(`Enabling streaming property!`);
           this.isStreamingPhotos.set(userId, true);
 
