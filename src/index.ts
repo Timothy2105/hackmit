@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import * as ejs from 'ejs';
 import * as path from 'path';
 import { supabase } from './supabase';
-import * as constants from './util/constants'
+import * as constants from './util/constants';
 
 /**
  * Interface representing a stored photo with metadata
@@ -64,19 +64,45 @@ class ExampleMentraOSApp extends AppServer {
     const recordingCommands = session.events.onTranscription(async (data) => {
       const transcribedText: String = data.text.toLowerCase().trim();
       const isFinal: boolean = data.isFinal;
-      
+
       if (isFinal) {
         console.log(`Transcribed text: ${transcribedText}`);
-  
+
         // Photo handling
         if (transcribedText.includes(constants.STOP_PROMPT)) {
           session.logger.info(`Disabling streaming property!`);
           this.isStreamingPhotos.set(userId, false);
           this.nextPhotoTime.delete(userId);
+
+          // stop recording
+          try {
+            await session.audio.speak('Recording stopped', {
+              model_id: 'eleven_flash_v2_5',
+              voice_settings: {
+                speed: 1.0,
+                stability: 0.7,
+              },
+            });
+          } catch (error) {
+            session.logger.error(`TTS error: ${error}`);
+          }
         } else if (transcribedText.includes(constants.RECORDING_PROMPT)) {
           session.logger.info(`Enabling streaming property!`);
           this.isStreamingPhotos.set(userId, true);
-        } 
+
+          // start recording
+          try {
+            await session.audio.speak('Recording started', {
+              model_id: 'eleven_flash_v2_5',
+              voice_settings: {
+                speed: 1.0,
+                stability: 0.7,
+              },
+            });
+          } catch (error) {
+            session.logger.error(`TTS error: ${error}`);
+          }
+        }
       }
     });
 
@@ -107,7 +133,7 @@ class ExampleMentraOSApp extends AppServer {
     // Janitors
     this.addCleanupHandler(recordingCommands);
     this.addCleanupHandler(takePhoto);
-    
+
     // repeatedly check if we are in streaming mode and if we are ready to take another photo
     setInterval(async () => {
       if (this.isStreamingPhotos.get(userId) && Date.now() > (this.nextPhotoTime.get(userId) ?? 0)) {
