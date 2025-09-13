@@ -62,14 +62,37 @@ class ExampleMentraOSApp extends AppServer {
 
     // set up transcription listener to account for streaming
     const recordingCommands = session.events.onTranscription(async (data) => {
-      const transcribedText: String = data.text.toLowerCase().trim();
       const isFinal: boolean = data.isFinal;
 
       if (isFinal) {
-        console.log(`Transcribed text: ${transcribedText}`);
+        // process transcribed text
+        const transcribedText = data.text
+          .toLowerCase()
+          .replace(/[^\w\s]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        console.log(`Transcription: "${transcribedText}"`);
 
         // Photo handling
         if (transcribedText.includes(constants.STOP_PROMPT)) {
+          // Check if currently recording
+          if (!this.isStreamingPhotos.get(userId)) {
+            session.logger.info(`User ${userId} tried to stop recording but not currently recording`);
+            try {
+              await session.audio.speak('Not currently recording', {
+                model_id: 'eleven_flash_v2_5',
+                voice_settings: {
+                  speed: 1.0,
+                  stability: 0.7,
+                },
+              });
+            } catch (error) {
+              session.logger.error(`TTS error: ${error}`);
+            }
+            return;
+          }
+
           session.logger.info(`Disabling streaming property!`);
           this.isStreamingPhotos.set(userId, false);
           this.nextPhotoTime.delete(userId);
