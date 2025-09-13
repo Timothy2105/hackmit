@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import * as ejs from 'ejs';
 import * as path from 'path';
 import { supabase } from './supabase';
+import * as constants from './util/constants'
 
 /**
  * Interface representing a stored photo with metadata
@@ -59,8 +60,28 @@ class ExampleMentraOSApp extends AppServer {
     this.isStreamingPhotos.set(userId, false);
     this.nextPhotoTime.set(userId, Date.now());
 
+    // set up transcription listener to account for streaming
+    const recordingCommands = session.events.onTranscription(async (data) => {
+      const transcribedText: String = data.text.toLowerCase().trim();
+      const isFinal: boolean = data.isFinal;
+      
+      if (isFinal) {
+        console.log(`Transcribed text: ${transcribedText}`);
+  
+        // Photo handling
+        if (transcribedText.includes(constants.STOP_PROMPT)) {
+          session.logger.info(`Disabling streaming property!`);
+          this.isStreamingPhotos.set(userId, false);
+          this.nextPhotoTime.delete(userId);
+        } else if (transcribedText.includes(constants.RECORDING_PROMPT)) {
+          session.logger.info(`Enabling streaming property!`);
+          this.isStreamingPhotos.set(userId, true);
+        } 
+      }
+    });
+
     // this gets called whenever a user presses a button
-    session.events.onButtonPress(async (button) => {
+    const takePhoto = session.events.onButtonPress(async (button) => {
       this.logger.info(`Button pressed: ${button.buttonId}, type: ${button.pressType}`);
 
       if (button.pressType === 'long') {
@@ -83,6 +104,10 @@ class ExampleMentraOSApp extends AppServer {
       }
     });
 
+    // Janitors
+    this.addCleanupHandler(recordingCommands);
+    this.addCleanupHandler(takePhoto);
+    
     // repeatedly check if we are in streaming mode and if we are ready to take another photo
     setInterval(async () => {
       if (this.isStreamingPhotos.get(userId) && Date.now() > (this.nextPhotoTime.get(userId) ?? 0)) {
@@ -134,6 +159,7 @@ class ExampleMentraOSApp extends AppServer {
     const objectPath = `${userId}/${photo.requestId}.${ext}`;
 
     // upload to supabase storage
+    this.logger.info(`Uploading photo to Supabase storage at path: ${objectPath}`);
     const { error: uploadErr } = await supabase.storage.from(bucket).upload(objectPath, cachedPhoto.buffer, {
       contentType: cachedPhoto.mimeType,
       upsert: true,
