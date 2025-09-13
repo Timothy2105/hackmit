@@ -5,9 +5,7 @@ import * as path from 'path';
 import { supabase } from './supabase';
 import * as constants from './util/constants';
 
-/**
- * Interface representing a stored photo with metadata
- */
+// interface for a stored photo with metadata
 interface StoredPhoto {
   requestId: string;
   buffer: Buffer;
@@ -34,11 +32,15 @@ const PORT = parseInt(process.env.PORT || '3000');
  * Photo Taker App with webview functionality for displaying photos
  * Extends AppServer to provide photo taking and webview display capabilities
  */
-class ExampleMentraOSApp extends AppServer {
+class ForensicsApp extends AppServer {
   private photos: Map<string, StoredPhoto> = new Map(); // Store photos by userId
   private latestPhotoTimestamp: Map<string, number> = new Map(); // Track latest photo timestamp per user
   private isStreamingPhotos: Map<string, boolean> = new Map(); // Track if we are streaming photos for a user
   private nextPhotoTime: Map<string, number> = new Map(); // Track next photo time for a user
+  private recordingSetup: Map<
+    string,
+    { scene?: string; object?: string; step: 'idle' | 'waiting_for_scene' | 'waiting_for_object' | 'ready' }
+  > = new Map(); // Track recording setup per user
 
   constructor() {
     super({
@@ -59,6 +61,7 @@ class ExampleMentraOSApp extends AppServer {
     // set the initial state of the user
     this.isStreamingPhotos.set(userId, false);
     this.nextPhotoTime.set(userId, Date.now());
+    this.recordingSetup.set(userId, { step: 'idle' });
 
     // set up transcription listener to account for streaming
     const recordingCommands = session.events.onTranscription(async (data) => {
@@ -74,8 +77,11 @@ class ExampleMentraOSApp extends AppServer {
 
         console.log(`Transcription: "${transcribedText}"`);
 
-        // Photo handling
-        if (transcribedText.includes(constants.STOP_PROMPT)) {
+        // Photo handling with regex matching
+        const stopMatch = transcribedText.match(constants.STOP_RECORDING_REGEX);
+        const startMatch = transcribedText.match(constants.START_RECORDING_REGEX);
+
+        if (stopMatch) {
           // Check if currently recording
           if (!this.isStreamingPhotos.get(userId)) {
             session.logger.info(`User ${userId} tried to stop recording but not currently recording`);
@@ -109,7 +115,7 @@ class ExampleMentraOSApp extends AppServer {
           } catch (error) {
             session.logger.error(`TTS error: ${error}`);
           }
-        } else if (transcribedText.includes(constants.RECORDING_PROMPT)) {
+        } else if (startMatch) {
           // check if already recording
           if (this.isStreamingPhotos.get(userId)) {
             session.logger.info(`User ${userId} is already recording`);
@@ -127,12 +133,27 @@ class ExampleMentraOSApp extends AppServer {
             return;
           }
 
-          session.logger.info(`Enabling streaming property!`);
+          // Extract scene and object from regex match
+          const sceneName = startMatch[1].trim().replace(/\s+/g, '_').toLowerCase();
+          const objectName = startMatch[2].trim().replace(/\s+/g, '_').toLowerCase();
+
+          session.logger.info(`Starting recording for scene: ${sceneName}, object: ${objectName}`);
+
+          // Create scene folder if it doesn't exist
+          await this.ensureSceneFolder(sceneName);
+
+          // Set up recording with extracted scene and object
+          this.recordingSetup.set(userId, {
+            scene: sceneName,
+            object: objectName,
+            step: 'ready',
+          });
+
+          // Start recording
           this.isStreamingPhotos.set(userId, true);
 
-          // start recording
           try {
-            await session.audio.speak('Recording started', {
+            await session.audio.speak(`Recording started for ${sceneName} - ${objectName}`, {
               model_id: 'eleven_flash_v2_5',
               voice_settings: {
                 speed: 1.0,
@@ -200,7 +221,36 @@ class ExampleMentraOSApp extends AppServer {
     // clean up the user's state
     this.isStreamingPhotos.set(userId, false);
     this.nextPhotoTime.delete(userId);
+    this.recordingSetup.delete(userId);
     this.logger.info(`Session stopped for user ${userId}, reason: ${reason}`);
+  }
+
+  /**
+   * Ensure scene folder exists in the main Supabase bucket
+   */
+  private async ensureSceneFolder(sceneName: string): Promise<void> {
+    try {
+      // Create a placeholder file to ensure the scene folder exists
+      const bucket = process.env.SUPABASE_BUCKET!;
+      const sceneFolderPath = `${sceneName}/.folder_placeholder`;
+
+      // Try to create the folder by uploading a small placeholder
+      const { error: createError } = await supabase.storage
+        .from(bucket)
+        .upload(sceneFolderPath, new Blob([''], { type: 'text/plain' }), {
+          upsert: true,
+        });
+
+      if (createError) {
+        this.logger.error(`Error creating scene folder ${sceneName}: ${createError.message}`);
+      } else {
+        this.logger.info(`Ensured scene folder exists: ${sceneName}`);
+        // Clean up the placeholder file
+        await supabase.storage.from(bucket).remove([sceneFolderPath]);
+      }
+    } catch (error) {
+      this.logger.error(`Error ensuring scene folder: ${error}`);
+    }
   }
 
   /**
@@ -220,12 +270,19 @@ class ExampleMentraOSApp extends AppServer {
     this.photos.set(userId, cachedPhoto);
     this.latestPhotoTimestamp.set(userId, cachedPhoto.timestamp.getTime());
 
+    // Get current recording setup for this user
+    const setup = this.recordingSetup.get(userId);
+    if (!setup || !setup.scene || !setup.object) {
+      this.logger.error(`No recording setup found for user ${userId}`);
+      return;
+    }
+
     const bucket = process.env.SUPABASE_BUCKET!;
     const ext = photo.mimeType === 'image/jpeg' ? 'jpg' : 'png';
-    const objectPath = `${userId}/${photo.requestId}.${ext}`;
+    const objectPath = `${setup.scene}/${setup.object}/${photo.requestId}.${ext}`;
 
-    // upload to supabase storage
-    this.logger.info(`Uploading photo to Supabase storage at path: ${objectPath}`);
+    // upload to main bucket with folder structure
+    this.logger.info(`Uploading photo to bucket ${bucket} at path: ${objectPath}`);
     const { error: uploadErr } = await supabase.storage.from(bucket).upload(objectPath, cachedPhoto.buffer, {
       contentType: cachedPhoto.mimeType,
       upsert: true,
@@ -236,20 +293,22 @@ class ExampleMentraOSApp extends AppServer {
       return;
     }
 
-    // insert metadata into table
-    const { error: insertErr } = await supabase.from('photos').insert({
+    // insert metadata into table with scene/object info
+    const { error: insertErr } = await supabase.from('mentra_scenes').insert({
       user_id: userId,
       request_id: photo.requestId,
       path: objectPath,
       mime_type: photo.mimeType,
       size: photo.size,
       captured_at: photo.timestamp.toISOString(),
+      scene: setup.scene,
+      object: setup.object,
     });
 
     if (insertErr) {
       this.logger.error(`Insert failed: ${insertErr.message}`);
     } else {
-      this.logger.info(`Saved photo to Supabase: ${objectPath}`);
+      this.logger.info(`Saved photo to scene ${setup.scene}, object ${setup.object}: ${objectPath}`);
     }
   }
 
@@ -267,7 +326,7 @@ class ExampleMentraOSApp extends AppServer {
 
       // latest row from supabase table
       const { data: row, error } = await supabase
-        .from('photos')
+        .from('mentra_scenes')
         .select('request_id, path, mime_type, size, captured_at')
         .eq('user_id', userId)
         .order('captured_at', { ascending: false })
@@ -304,7 +363,7 @@ class ExampleMentraOSApp extends AppServer {
 
       // look up path and metadata in supabase table
       const { data: row, error } = await supabase
-        .from('photos')
+        .from('mentra_scenes')
         .select('path, mime_type')
         .eq('user_id', userId)
         .eq('request_id', requestId)
@@ -351,6 +410,6 @@ class ExampleMentraOSApp extends AppServer {
 // Start the server
 // DEV CONSOLE URL: https://console.mentra.glass/
 // Get your webhook URL from ngrok (or whatever public URL you have)
-const app = new ExampleMentraOSApp();
+const app = new ForensicsApp();
 
 app.start().catch(console.error);
