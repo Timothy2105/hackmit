@@ -81,6 +81,8 @@ class ForensicsApp extends AppServer {
         const stopMatch = transcribedText.match(constants.STOP_RECORDING_REGEX);
         const startMatch = transcribedText.match(constants.START_RECORDING_REGEX);
         const sayHiMatch = transcribedText.match(constants.SAY_HI_REGEX);
+        const firstHintMatch = transcribedText.match(constants.FIRST_HINT_REGEX);
+        const secondHintMatch = transcribedText.match(constants.SECOND_HINT_REGEX);
 
         // 👋 Say hi intent
         if (sayHiMatch) {
@@ -92,7 +94,33 @@ class ForensicsApp extends AppServer {
           } catch (error) {
             session.logger.error(`TTS error (hi): ${error}`);
           }
-          return; // stop here, don’t fall through
+          return; // stop here, don't fall through
+        }
+
+        // 💡 First hint intent
+        if (firstHintMatch) {
+          try {
+            await session.audio.speak(constants.FIRST_HINT_RESPONSE, {
+              model_id: 'eleven_flash_v2_5',
+              voice_settings: { speed: 1.0, stability: 0.7 },
+            });
+          } catch (error) {
+            session.logger.error(`TTS error (first hint): ${error}`);
+          }
+          return; // stop here, don't fall through
+        }
+
+        // 💡 Second hint intent
+        if (secondHintMatch) {
+          try {
+            await session.audio.speak(constants.SECOND_HINT_RESPONSE, {
+              model_id: 'eleven_flash_v2_5',
+              voice_settings: { speed: 1.0, stability: 0.7 },
+            });
+          } catch (error) {
+            session.logger.error(`TTS error (second hint): ${error}`);
+          }
+          return; // stop here, don't fall through
         }
 
         if (stopMatch) {
