@@ -77,9 +77,23 @@ class ForensicsApp extends AppServer {
 
         console.log(`Transcription: "${transcribedText}"`);
 
-        // Photo handling with regex matching
+        // Regex matching for intents
         const stopMatch = transcribedText.match(constants.STOP_RECORDING_REGEX);
         const startMatch = transcribedText.match(constants.START_RECORDING_REGEX);
+        const sayHiMatch = transcribedText.match(constants.SAY_HI_REGEX);
+
+        // 👋 Say hi intent
+        if (sayHiMatch) {
+          try {
+            await session.audio.speak("Nice to meet you, partner — I'm Dexter!", {
+              model_id: 'eleven_flash_v2_5',
+              voice_settings: { speed: 1.0, stability: 0.7 },
+            });
+          } catch (error) {
+            session.logger.error(`TTS error (hi): ${error}`);
+          }
+          return; // stop here, don’t fall through
+        }
 
         if (stopMatch) {
           // Check if currently recording
@@ -88,10 +102,7 @@ class ForensicsApp extends AppServer {
             try {
               await session.audio.speak('Not currently recording', {
                 model_id: 'eleven_flash_v2_5',
-                voice_settings: {
-                  speed: 1.0,
-                  stability: 0.7,
-                },
+                voice_settings: { speed: 1.0, stability: 0.7 },
               });
             } catch (error) {
               session.logger.error(`TTS error: ${error}`);
@@ -107,10 +118,7 @@ class ForensicsApp extends AppServer {
           try {
             await session.audio.speak('Recording stopped', {
               model_id: 'eleven_flash_v2_5',
-              voice_settings: {
-                speed: 1.0,
-                stability: 0.7,
-              },
+              voice_settings: { speed: 1.0, stability: 0.7 },
             });
           } catch (error) {
             session.logger.error(`TTS error: ${error}`);
@@ -122,10 +130,7 @@ class ForensicsApp extends AppServer {
             try {
               await session.audio.speak('Recording already in progress', {
                 model_id: 'eleven_flash_v2_5',
-                voice_settings: {
-                  speed: 1.0,
-                  stability: 0.7,
-                },
+                voice_settings: { speed: 1.0, stability: 0.7 },
               });
             } catch (error) {
               session.logger.error(`TTS error: ${error}`);
@@ -155,10 +160,7 @@ class ForensicsApp extends AppServer {
           try {
             await session.audio.speak(`Recording started for ${sceneName} - ${objectName}`, {
               model_id: 'eleven_flash_v2_5',
-              voice_settings: {
-                speed: 1.0,
-                stability: 0.7,
-              },
+              voice_settings: { speed: 1.0, stability: 0.7 },
             });
           } catch (error) {
             session.logger.error(`TTS error: ${error}`);
