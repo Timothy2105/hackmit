@@ -84,18 +84,18 @@ class ForensicsApp extends AppServer {
         const firstHintMatch = transcribedText.match(constants.FIRST_HINT_REGEX);
         const secondHintMatch = transcribedText.match(constants.SECOND_HINT_REGEX);
 
-        // 👋 Say hi intent
-        if (sayHiMatch) {
-          try {
-            await session.audio.speak("Nice to meet you, partner — I'm Dexter!", {
-              model_id: 'eleven_flash_v2_5',
-              voice_settings: { speed: 1.0, stability: 0.7 },
-            });
-          } catch (error) {
-            session.logger.error(`TTS error (hi): ${error}`);
-          }
-          return; // stop here, don't fall through
-        }
+        // // 👋 Say hi intent
+        // if (sayHiMatch) {
+        //   try {
+        //     await session.audio.speak("Nice to meet you, partner — I'm Dexter!", {
+        //       model_id: 'eleven_flash_v2_5',
+        //       voice_settings: { speed: 1.0, stability: 0.7 },
+        //     });
+        //   } catch (error) {
+        //     session.logger.error(`TTS error (hi): ${error}`);
+        //   }
+        //   return; // stop here, don't fall through
+        // }
 
         // 💡 First hint intent
         if (firstHintMatch) {
