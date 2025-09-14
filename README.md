@@ -1,3 +1,6 @@
+<img src="https://plume.hackmit.org/api/v3/projects/pr-Vu0jSTiLY0tk0tp/image?t=1757863478338">
+Dexter is the ultimate tool for aspiring game-devs, scanning real-world environments to reconstruct them as their very own virtual maps, using state-of-the-art Mentra glasses as facilitators for scanning and feedback, alongside AI neural networks that we trained to infer the shape and size of the environment itself. Kick it off by saying "Dexter, start recording..." and let Dexter see through your eyes, as he encodes and transmits real-time image data, as these images are then cached, organized, and used by our neural network to create a point cloud rendering.
+
 # Inspiration
 
 We *love* video games.
@@ -6,12 +9,6 @@ From running around endless worlds in Minecraft, to catching them all in Pokemon
 Stepping onto the MIT campus, we realized that many of these places could be turned into something cool. The ice rink we were working in could be a cool hockey game map. The empty hallways could be liminal spacing in a horror game. The classrooms could be a crime scene in a murder mystery! The list goes so on and on.
 
 With the idea of a murder mystery and forensics-like game on our minds (and Ryan being too obsessed with Dexter), we decided to name our hack after TV's favorite forensic analyst to show just how immersively this project can be used. It's also the inspiration for the little game we've prepared at demo!
-
-# What it does
-
-Dexter is the ultimate tool for aspiring game-devs, scanning real-world environments to reconstruct them as their very own virtual maps, using state-of-the-art Mentra glasses as facilitators for scanning and feedback, alongside AI neural networks that we trained to infer the shape and size of the environment itself.
-
-Kick it off by saying "Dexter, start recording..." and let Dexter see through your eyes, as he encodes and transmits real-time image data to Supabase, where these images are then cached, organized, and used by our neural network to create a point cloud rendering.
 
 # How we built it
 
