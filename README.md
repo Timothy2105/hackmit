@@ -1,5 +1,5 @@
+**Dexter** is the ultimate tool for aspiring game-devs, scanning real-world environments to reconstruct them as their very own virtual maps, using state-of-the-art Mentra glasses as facilitators for scanning and feedback, alongside AI neural networks that we trained to infer the shape and size of the environment itself. Kick it off by saying "Dexter, start recording..." and let Dexter see through your eyes, as he encodes and transmits real-time image data, as these images are then cached, organized, and used by our neural network to create a point cloud rendering.
 <img src="https://plume.hackmit.org/api/v3/projects/pr-Vu0jSTiLY0tk0tp/image?t=1757863478338">
-Dexter is the ultimate tool for aspiring game-devs, scanning real-world environments to reconstruct them as their very own virtual maps, using state-of-the-art Mentra glasses as facilitators for scanning and feedback, alongside AI neural networks that we trained to infer the shape and size of the environment itself. Kick it off by saying "Dexter, start recording..." and let Dexter see through your eyes, as he encodes and transmits real-time image data, as these images are then cached, organized, and used by our neural network to create a point cloud rendering.
 
 # Inspiration
 
